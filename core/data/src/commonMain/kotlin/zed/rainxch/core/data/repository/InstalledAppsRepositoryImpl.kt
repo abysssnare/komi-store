@@ -30,6 +30,7 @@ import zed.rainxch.core.domain.model.account.github.GithubRelease
 import zed.rainxch.core.domain.model.account.github.isEffectivelyPreRelease
 import zed.rainxch.core.domain.model.installation.InstallSource
 import zed.rainxch.core.domain.model.installation.InstalledApp
+import zed.rainxch.core.domain.model.installation.ParkedInstallDisposal
 import zed.rainxch.core.domain.model.installation.clearPending
 import zed.rainxch.core.domain.model.installation.confirmInstall
 import zed.rainxch.core.domain.model.installation.markPending
@@ -52,7 +53,6 @@ class InstalledAppsRepositoryImpl(
     private val forgejoClientRegistry: zed.rainxch.core.data.network.ForgejoClientRegistry,
 ) : InstalledAppsRepository {
     private val checkAllMutex = Mutex()
-
 
     private val httpClient: HttpClient get() = clientProvider.client
 
@@ -194,10 +194,10 @@ class InstalledAppsRepositoryImpl(
 
         // An APK no installed app owns is usually a sibling app the user never installed
         // (monorepos). Only an app with no asset name or glob to compare can't tell.
-        fun belongsElsewhere(asset: GithubAsset, releaseAssets: List<GithubAsset>): Boolean {
+        fun belongsElsewhere(asset: GithubAsset, releaseTag: String, releaseAssets: List<GithubAsset>): Boolean {
             if (self == null) return false
             if (!AssetOwnership.canOwn(self, asset.name)) return true
-            val owner = AssetOwnership.ownerOf(asset.name, repoApps, releaseAssets, releases)
+            val owner = AssetOwnership.ownerOf(asset.name, repoApps, releaseAssets, releases, releaseTag)
                 ?: return self.installedAssetName != null || !self.assetGlobPattern.isNullOrBlank()
             return owner.packageName != trackedPackageName
         }
@@ -221,17 +221,19 @@ class InstalledAppsRepositoryImpl(
                 (
                     if (filter == null) installableForPlatform
                     else installableForPlatform.filter { filter.matches(it.name) }
-                ).filterNot { belongsElsewhere(it, installableForPlatform) }
+                ).filterNot { belongsElsewhere(it, release.tagName, installableForPlatform) }
 
             if (installableForApp.isEmpty()) continue
 
-            val sameApp = AssetOwnership.narrowToApp(installableForApp, installedAssetName)
+            val sameApp =
+                AssetOwnership.narrowToApp(installableForApp, installedAssetName, release.tagName, self?.installedVersion)
             val fingerprintMatch =
                 AssetVariant.resolvePreferredAsset(
                     assets = sameApp,
                     pinnedVariant = preferredVariant,
                     pinnedTokens = preferredTokens.takeIf { it.isNotEmpty() },
                     pinnedGlob = preferredGlob,
+                    releaseTag = release.tagName,
                 )
 
             val positionMatch =
@@ -249,6 +251,8 @@ class InstalledAppsRepositoryImpl(
                 AssetOwnership.narrowToApp(
                     AssetVariant.filterByPackageFlavor(installableForApp, trackedPackageName),
                     installedAssetName,
+                    release.tagName,
+                    self?.installedVersion,
                 )
             val primary = fingerprintMatch
                 ?: positionMatch
@@ -340,12 +344,27 @@ class InstalledAppsRepositoryImpl(
 
             val (matchedRelease, primaryAsset, variantWasLost) = resolved
 
+            val bound =
+                if (app.installedAssetId != null || app.installedAssetDigest != null) {
+                    UpdateVerdict.Bound(
+                        assetId = app.installedAssetId,
+                        assetDigest = app.installedAssetDigest,
+                        releasePublishedAt =
+                            app.installedReleaseId?.let { id ->
+                                releases.firstOrNull { it.id == id }?.publishedAt
+                            },
+                    )
+                } else {
+                    null
+                }
+
             val verdict =
                 UpdateVerdict.decide(
                     installed =
                         UpdateVerdict.Installed(
                             tag = app.installedVersion,
                             versionCode = app.installedVersionCode,
+                            versionName = app.installedVersionName,
                         ),
                     stored =
                         UpdateVerdict.Stored(
@@ -369,6 +388,7 @@ class InstalledAppsRepositoryImpl(
                             assetSize = primaryAsset.size,
                         ),
                     skippedTag = app.skippedReleaseTag,
+                    bound = bound,
                 )
 
             if (verdict.skipBecameStale) {
@@ -382,6 +402,7 @@ class InstalledAppsRepositoryImpl(
                         "installedTag=${app.installedVersion} matchedTag=${matchedRelease.tagName} " +
                         "storedPublishedAt=${app.latestReleasePublishedAt} " +
                         "matchedPublishedAt=${matchedRelease.publishedAt} " +
+                        "bound=${bound != null} " +
                         "isUpdate=$isUpdateAvailable"
             }
 
@@ -410,6 +431,7 @@ class InstalledAppsRepositoryImpl(
                     codesAlreadyMatch = verdict.codesAlreadyMatch,
                     installedTag = app.installedVersion,
                     matchedTag = matchedRelease.tagName,
+                    deviceRunsMatchedRelease = verdict.deviceRunsMatchedRelease,
                 )
             if (shouldRewriteTag) {
                 adoptMatchedTag(
@@ -460,8 +482,11 @@ class InstalledAppsRepositoryImpl(
     override suspend fun updateAppVersion(
         packageName: String,
         newTag: String,
-        newAssetName: String,
-        newAssetUrl: String,
+        newReleaseId: Long?,
+        newAssetId: Long?,
+        newAssetDigest: String?,
+        newAssetName: String?,
+        newAssetUrl: String?,
         newVersionName: String,
         newVersionCode: Long,
         signingFingerprint: String?,
@@ -491,6 +516,9 @@ class InstalledAppsRepositoryImpl(
             app.toDomain()
                 .confirmInstall(
                     tag = newTag,
+                    releaseId = newReleaseId,
+                    assetId = newAssetId,
+                    assetDigest = newAssetDigest,
                     assetName = newAssetName,
                     assetUrl = newAssetUrl,
                     versionName = newVersionName,
@@ -501,6 +529,10 @@ class InstalledAppsRepositoryImpl(
                 )
                 .toEntity(),
         )
+    }
+
+    override suspend fun clearInstallBinding(packageName: String) {
+        installedAppsDao.clearInstallBinding(packageName)
     }
 
     override suspend fun updateApp(app: InstalledApp) {
@@ -530,7 +562,17 @@ class InstalledAppsRepositoryImpl(
         val app = installedAppsDao.getAppByPackage(packageName) ?: return
         installedAppsDao.updateApp(
             app.toDomain()
-                .let { if (isPending) it.markPending() else it.clearPending() }
+                .let {
+                    if (isPending) {
+                        it.markPending(
+                            releaseId = app.latestReleaseId,
+                            assetId = app.latestAssetId,
+                            assetDigest = app.latestAssetDigest,
+                        )
+                    } else {
+                        it.clearPending()
+                    }
+                }
                 .toEntity(),
         )
     }
@@ -655,6 +697,44 @@ class InstalledAppsRepositoryImpl(
         )
     }
 
+    override suspend fun markAwaitingInstall(
+        packageName: String,
+        path: String,
+        version: String?,
+        assetName: String?,
+    ) {
+        installedAppsDao.markAwaitingInstall(
+            packageName = packageName,
+            path = path,
+            version = version,
+            assetName = assetName,
+        )
+    }
+
+    override suspend fun discardParkedInstall(
+        packageName: String,
+        expectedPath: String?,
+    ): ParkedInstallDisposal {
+        if (expectedPath != null) {
+            if (tryDeleteParkedFile(expectedPath) == ParkedFileDisposal.Survived) {
+                Logger.w { "Parked file for $packageName survived the discard; pointer kept" }
+                return ParkedInstallDisposal.Retained
+            }
+        }
+        installedAppsDao.clearPendingInstallIfPathMatches(
+            packageName = packageName,
+            path = expectedPath,
+        )
+        val remainingPath = installedAppsDao.getAppByPackage(packageName)?.pendingInstallFilePath
+        return if (remainingPath != null) {
+            Logger.d { "Parked install for $packageName still names $remainingPath; row kept" }
+            ParkedInstallDisposal.Retained
+        } else {
+            Logger.d { "Discarded parked install for $packageName (path=${expectedPath ?: "none"})" }
+            ParkedInstallDisposal.Discarded
+        }
+    }
+
     override suspend fun previewMatchingAssets(
         owner: String,
         repo: String,
@@ -719,4 +799,17 @@ class InstalledAppsRepositoryImpl(
             emptyList()
         }
     }
+}
+
+internal enum class ParkedFileDisposal {
+    Gone,
+
+    Survived,
+}
+
+internal fun tryDeleteParkedFile(path: String): ParkedFileDisposal {
+    val file = java.io.File(path)
+    val deleted = runCatching { file.delete() }.getOrDefault(false)
+    if (deleted) return ParkedFileDisposal.Gone
+    return if (file.exists()) ParkedFileDisposal.Survived else ParkedFileDisposal.Gone
 }
