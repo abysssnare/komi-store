@@ -18,6 +18,7 @@ import zed.rainxch.apps.presentation.model.LinkStep
 import zed.rainxch.apps.presentation.model.UpdateAllProgress
 import zed.rainxch.apps.presentation.model.VariantOption
 import zed.rainxch.apps.presentation.model.VariantPickerError
+import zed.rainxch.core.domain.system.OrchestratedDownload
 import zed.rainxch.core.domain.system.RepoMatchSuggestion
 
 data class AppsState(
@@ -49,6 +50,7 @@ data class AppsState(
     val repoValidationError: String? = null,
     val linkValidationStatus: String? = null,
     val linkInstallableAssets: ImmutableList<GithubAssetUi> = persistentListOf(),
+    val linkAssetsReleaseTag: String? = null,
     val linkSelectedAsset: GithubAssetUi? = null,
     val linkDownloadProgress: Int? = null,
     val fetchedRepoInfo: GithubRepoInfoUi? = null,
@@ -101,4 +103,8 @@ data class AppsState(
     val pendingGroups: ImmutableList<AppGroup> = persistentListOf(),
     val updateGroups: ImmutableList<AppGroup> = persistentListOf(),
     val idleGroups: ImmutableList<AppGroup> = persistentListOf(),
+
+    val inProgressDownloads: ImmutableList<OrchestratedDownload> = persistentListOf(),
+
+    val hiddenRowPackages: ImmutableSet<String> = persistentSetOf(),
 )

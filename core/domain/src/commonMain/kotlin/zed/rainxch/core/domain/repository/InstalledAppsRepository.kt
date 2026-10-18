@@ -2,6 +2,7 @@ package zed.rainxch.core.domain.repository
 
 import kotlinx.coroutines.flow.Flow
 import zed.rainxch.core.domain.model.installation.InstalledApp
+import zed.rainxch.core.domain.model.installation.ParkedInstallDisposal
 import zed.rainxch.core.domain.model.smart_detect.MatchingPreview
 
 interface InstalledAppsRepository {
@@ -34,13 +35,18 @@ interface InstalledAppsRepository {
     suspend fun updateAppVersion(
         packageName: String,
         newTag: String,
-        newAssetName: String,
-        newAssetUrl: String,
+        newReleaseId: Long?,
+        newAssetId: Long?,
+        newAssetDigest: String?,
+        newAssetName: String?,
+        newAssetUrl: String?,
         newVersionName: String,
         newVersionCode: Long,
         signingFingerprint: String?,
         isPendingInstall: Boolean = true,
     )
+
+    suspend fun clearInstallBinding(packageName: String)
 
     suspend fun updateApp(app: InstalledApp)
 
@@ -97,6 +103,18 @@ interface InstalledAppsRepository {
         version: String? = null,
         assetName: String? = null,
     )
+
+    suspend fun markAwaitingInstall(
+        packageName: String,
+        path: String,
+        version: String?,
+        assetName: String?,
+    )
+
+    suspend fun discardParkedInstall(
+        packageName: String,
+        expectedPath: String?,
+    ): ParkedInstallDisposal
 
     suspend fun previewMatchingAssets(
         owner: String,
