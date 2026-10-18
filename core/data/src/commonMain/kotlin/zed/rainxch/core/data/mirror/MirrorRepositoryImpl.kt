@@ -59,6 +59,7 @@ class MirrorRepositoryImpl(
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
     private val migrationDeferred = CompletableDeferred<Unit>()
+    private val catalogLoaded = CompletableDeferred<Unit>()
 
     init {
         appScope.launch {
@@ -97,6 +98,7 @@ class MirrorRepositoryImpl(
             }
             migrationDeferred.complete(Unit)
             _catalog.value = readCachedCatalogOrBundled()
+            catalogLoaded.complete(Unit)
             val cachedAt = runCatching { ksafe.safeGet(K_CACHED_AT, 0L) }.getOrDefault(0L)
             if (Clock.System.now().toEpochMilliseconds() - cachedAt > cacheTtlMs) {
                 refreshCatalog()
@@ -165,6 +167,7 @@ class MirrorRepositoryImpl(
 
     override suspend fun measureLatencies(): Result<Map<String, Int>> =
         try {
+            catalogLoaded.await()
             val measured = latencyProbe.probe(_catalog.value)
             _measuredLatencies.value = measured
             Result.success(measured)
