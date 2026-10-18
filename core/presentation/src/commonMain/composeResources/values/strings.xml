@@ -1024,9 +1024,9 @@
     <string name="mirror_section_official">Official</string>
     <string name="mirror_section_community">Community</string>
 
-    <!-- Mirror - Device-measured latency -->
-    <string name="mirror_auto_fastest">Auto (fastest)</string>
-    <string name="mirror_auto_fastest_sub">Pick the mirror with the lowest latency from this device</string>
+    <string name="mirror_pick_fastest">Pick fastest</string>
+    <string name="mirror_pick_fastest_sub">Measure every mirror from this device, Direct included, and select the fastest</string>
+    <string name="mirror_measuring">Measuring from this device…</string>
     <string name="mirror_measure_latency">Measure latency</string>
     <string name="mirror_latency_local">%1$d ms from you</string>
     <string name="mirror_fastest_badge">%1$s · fastest</string>

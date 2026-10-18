@@ -28,7 +28,7 @@ import zed.rainxch.core.domain.model.mirror.MirrorConfig
 import zed.rainxch.core.domain.model.mirror.MirrorPreference
 import zed.rainxch.core.domain.model.mirror.MirrorStatus
 import zed.rainxch.core.domain.model.mirror.MirrorType
-import zed.rainxch.core.domain.model.mirror.TrafficKind
+import zed.rainxch.core.domain.model.mirror.fastestReleaseMirror
 import zed.rainxch.core.presentation.components.bars.KomiTopBar
 import zed.rainxch.core.presentation.components.buttons.KomiButton
 import zed.rainxch.core.presentation.components.buttons.KomiButtonVariant
@@ -41,14 +41,15 @@ import zed.rainxch.core.presentation.locals.LocalPersonality
 import zed.rainxch.core.presentation.utils.ObserveAsEvents
 import zed.rainxch.githubstore.core.presentation.res.Res
 import zed.rainxch.githubstore.core.presentation.res.host_tokens_title
-import zed.rainxch.githubstore.core.presentation.res.mirror_auto_fastest
-import zed.rainxch.githubstore.core.presentation.res.mirror_auto_fastest_sub
 import zed.rainxch.githubstore.core.presentation.res.mirror_custom_label
 import zed.rainxch.githubstore.core.presentation.res.mirror_fastest_badge
 import zed.rainxch.githubstore.core.presentation.res.mirror_fastest_chosen
 import zed.rainxch.githubstore.core.presentation.res.mirror_latency_local
 import zed.rainxch.githubstore.core.presentation.res.mirror_measure_latency
+import zed.rainxch.githubstore.core.presentation.res.mirror_measuring
 import zed.rainxch.githubstore.core.presentation.res.mirror_no_mirror_responded
+import zed.rainxch.githubstore.core.presentation.res.mirror_pick_fastest
+import zed.rainxch.githubstore.core.presentation.res.mirror_pick_fastest_sub
 import zed.rainxch.githubstore.core.presentation.res.mirror_picker_description
 import zed.rainxch.githubstore.core.presentation.res.mirror_picker_title
 import zed.rainxch.githubstore.core.presentation.res.mirror_removed_toast
@@ -97,7 +98,7 @@ fun MirrorPickerRoot(
 
             is MirrorPickerEvent.FastestMirrorChosen ->
                 coroutineScope.launch {
-                    toastState.warning(
+                    toastState.success(
                         getString(
                             Res.string.mirror_fastest_chosen,
                             event.displayName,
@@ -136,7 +137,7 @@ fun MirrorPickerRoot(
         val colors = LocalPersonality.current.colors
         val official = state.mirrors.filter { it.type == MirrorType.OFFICIAL }
         val community = state.mirrors.filter { it.type == MirrorType.COMMUNITY }
-        val fastestMirrorId = fastestMirrorId(state.mirrors, state.measuredLatencies)
+        val fastestMirrorId = fastestReleaseMirror(state.mirrors, state.measuredLatencies)?.first?.id
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -159,8 +160,15 @@ fun MirrorPickerRoot(
             )
             SettingsGroup {
                 SettingsRow(
-                    title = stringResource(Res.string.mirror_auto_fastest),
-                    subtitle = stringResource(Res.string.mirror_auto_fastest_sub),
+                    title = stringResource(Res.string.mirror_pick_fastest),
+                    subtitle =
+                        stringResource(
+                            if (state.isMeasuringLatencies) {
+                                Res.string.mirror_measuring
+                            } else {
+                                Res.string.mirror_pick_fastest_sub
+                            },
+                        ),
                     last = official.isEmpty(),
                     onClick = { viewModel.onAction(MirrorPickerAction.OnAutoPickFastest) },
                     trailing = {
@@ -291,15 +299,6 @@ private fun MirrorSettingsRow(
     )
 }
 
-private fun fastestMirrorId(
-    mirrors: List<MirrorConfig>,
-    measuredLatencies: Map<String, Int>,
-): String? =
-    mirrors
-        .filter { TrafficKind.RELEASE_ASSET in it.trafficKinds }
-        .filter { measuredLatencies.containsKey(it.id) }
-        .minByOrNull { measuredLatencies.getValue(it.id) }
-        ?.id
 
 @Composable
 private fun formatTestResult(result: TestResult): String =

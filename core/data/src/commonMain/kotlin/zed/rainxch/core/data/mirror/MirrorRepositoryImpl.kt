@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import eu.anifantakis.lib.ksafe.KSafe
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.BufferOverflow
@@ -163,10 +164,14 @@ class MirrorRepositoryImpl(
     override fun observeMeasuredLatencies(): Flow<Map<String, Int>> = _measuredLatencies.asStateFlow()
 
     override suspend fun measureLatencies(): Result<Map<String, Int>> =
-        runCatching {
+        try {
             val measured = latencyProbe.probe(_catalog.value)
             _measuredLatencies.value = measured
-            measured
+            Result.success(measured)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Result.failure(e)
         }
 
     override fun observeRemovedNotices(): Flow<MirrorRemoved> = _removedNotices.asSharedFlow()

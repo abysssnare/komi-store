@@ -17,7 +17,7 @@ import org.jetbrains.compose.resources.getString
 import zed.rainxch.core.data.network.MirrorRewriter
 import zed.rainxch.core.domain.model.mirror.MirrorConfig
 import zed.rainxch.core.domain.model.mirror.MirrorPreference
-import zed.rainxch.core.domain.model.mirror.TrafficKind
+import zed.rainxch.core.domain.model.mirror.fastestReleaseMirror
 import zed.rainxch.core.domain.repository.MirrorRepository
 import zed.rainxch.githubstore.core.presentation.res.Res
 import zed.rainxch.githubstore.core.presentation.res.error_unknown
@@ -89,12 +89,16 @@ class MirrorPickerViewModel(
 
     private fun selectMirror(mirror: MirrorConfig) {
         viewModelScope.launch {
-            val pref = if (mirror.id == "direct") {
-                MirrorPreference.Direct
-            } else MirrorPreference.Selected(mirror.id)
-            mirrorRepository.setPreference(pref)
+            mirrorRepository.setPreference(preferenceFor(mirror))
         }
     }
+
+    private fun preferenceFor(mirror: MirrorConfig): MirrorPreference =
+        if (mirror.id == "direct") {
+            MirrorPreference.Direct
+        } else {
+            MirrorPreference.Selected(mirror.id)
+        }
 
     private fun updateDraft(value: String) {
         val error =
@@ -136,17 +140,13 @@ class MirrorPickerViewModel(
         viewModelScope.launch {
             _state.update { it.copy(isMeasuringLatencies = true) }
             val measured = mirrorRepository.measureLatencies().getOrDefault(emptyMap())
-            val fastest =
-                state.value.mirrors
-                    .filter { TrafficKind.RELEASE_ASSET in it.trafficKinds }
-                    .mapNotNull { mirror -> measured[mirror.id]?.let { mirror to it } }
-                    .minByOrNull { it.second }
+            val fastest = fastestReleaseMirror(state.value.mirrors, measured)
             _state.update { it.copy(isMeasuringLatencies = false) }
             if (fastest == null) {
                 _events.send(MirrorPickerEvent.NoMirrorResponded)
                 return@launch
             }
-            mirrorRepository.setPreference(MirrorPreference.Selected(fastest.first.id))
+            mirrorRepository.setPreference(preferenceFor(fastest.first))
             _events.send(
                 MirrorPickerEvent.FastestMirrorChosen(
                     displayName = fastest.first.name,

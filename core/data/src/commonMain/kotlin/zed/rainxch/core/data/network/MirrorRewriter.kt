@@ -41,10 +41,10 @@ object MirrorRewriter {
             else -> null
         }
 
-    // Small public raw file every GitHub proxy is expected to serve. Used to time a
-    // mirror from the device instead of trusting the latency the backend measured.
-    fun probeUrl(template: String?): String =
-        template?.let { applyTemplate(it, PROBE_URL) } ?: PROBE_URL
+    fun probeUrl(template: String?): String = mirrorProbeUrl(template) ?: PROBE_URL
+
+    fun mirrorProbeUrl(template: String?): String? =
+        if (template == null) PROBE_URL else applyTemplate(template, PROBE_URL)
 
     private const val PROBE_URL = "https://raw.githubusercontent.com/octocat/Hello-World/master/README"
 
